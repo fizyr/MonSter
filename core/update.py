@@ -1,3 +1,5 @@
+from typing import Optional, Tuple, List
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -30,9 +32,14 @@ class ConvGRU(nn.Module):
         self.convr = nn.Conv2d(hidden_dim+input_dim, hidden_dim, kernel_size, padding=kernel_size//2)
         self.convq = nn.Conv2d(hidden_dim+input_dim, hidden_dim, kernel_size, padding=kernel_size//2)
 
-    def forward(self, h, cz, cr, cq, *x_list):
+    def forward(self, h, cz, cr, cq, x1: torch.Tensor, x2: Optional[torch.Tensor] = None):
 
-        x = torch.cat(x_list, dim=1)
+        # Build x based on the value of x2.
+        if x2 is not None:
+            x = torch.cat([x1, x2], dim=1)
+        else:
+            x = x1
+
         hx = torch.cat([h, x], dim=1)
         z = torch.sigmoid(self.convz(hx) + cz)
         r = torch.sigmoid(self.convr(hx) + cr)
@@ -73,9 +80,8 @@ class SepConvGRU(nn.Module):
 def interp(x, dest):
     original_dtype = x.dtype
     x_fp32 = x.float()
-    interp_args = {'mode': 'bilinear', 'align_corners': True}
     with torch.cuda.amp.autocast(enabled=False):
-        output_fp32 = F.interpolate(x_fp32, dest.shape[2:], **interp_args)
+        output_fp32 = F.interpolate(x_fp32.contiguous(), dest.shape[2:], mode='bilinear', align_corners=True)
     if original_dtype != torch.float32:
         output = output_fp32.to(original_dtype)
     else:
@@ -114,7 +120,11 @@ def pool4x(x):
 #     return F.interpolate(x, dest.shape[2:], **interp_args)
 
 class BasicMultiUpdateBlock(nn.Module):
-    def __init__(self, args, hidden_dims=[]):
+    def __init__(
+        self,
+        args,
+        hidden_dims: List[int],
+    ):
         super().__init__()
         self.args = args
         self.encoder = BasicMotionEncoder(args)
@@ -124,34 +134,37 @@ class BasicMultiUpdateBlock(nn.Module):
         self.gru08 = ConvGRU(hidden_dims[1], hidden_dims[0] * (args.n_gru_layers == 3) + hidden_dims[2])
         self.gru16 = ConvGRU(hidden_dims[0], hidden_dims[1])
         self.disp_head = DispHead(hidden_dims[2], hidden_dim=256, output_dim=1)
-        factor = 2**self.args.n_downsample
 
         self.mask_feat_4 = nn.Sequential(
             nn.Conv2d(hidden_dims[2], 32, 3, padding=1),
             nn.ReLU(inplace=True))
-
-    def forward(self, net, inp, corr=None, disp=None, iter04=True, iter08=True, iter16=True, update=True):
+    
+    def forward(
+        self,
+        net: List[torch.Tensor],
+        inp: List[List[torch.Tensor]],
+        corr: Optional[torch.Tensor] = None,
+        disp: Optional[torch.Tensor] = None,
+        iter04: bool = True,
+        iter08: bool = True,
+        iter16: bool = True,
+        update: bool = True,
+    ) -> Tuple[List[torch.Tensor], torch.Tensor, torch.Tensor]:
 
         if iter16:
-            net[2] = self.gru16(net[2], *(inp[2]), pool2x(net[1]))
+            net[2] = self.gru16(net[2], inp[2][0], inp[2][1], inp[2][2], pool2x(net[1]))
         if iter08:
-            if self.args.n_gru_layers > 2:
-                net[1] = self.gru08(net[1], *(inp[1]), pool2x(net[0]), interp(net[2], net[1]))
-            else:
-                net[1] = self.gru08(net[1], *(inp[1]), pool2x(net[0]))
+            net[1] = self.gru08(net[1], inp[1][0], inp[1][1], inp[1][2], pool2x(net[0]), interp(net[2], net[1]))
         if iter04:
+            assert disp is not None
+            assert corr is not None
             motion_features = self.encoder(disp, corr)
-            if self.args.n_gru_layers > 1:
-                net[0] = self.gru04(net[0], *(inp[0]), motion_features, interp(net[1], net[0]))
-            else:
-                net[0] = self.gru04(net[0], *(inp[0]), motion_features)
-
-        if not update:
-            return net
+            net[0] = self.gru04(net[0], inp[0][0], inp[0][1], inp[0][2], motion_features, interp(net[1], net[0]))
 
         delta_disp = self.disp_head(net[0])
         mask_feat_4 = self.mask_feat_4(net[0])
         return net, mask_feat_4, delta_disp
+
 
 class BasicMultiUpdateBlock_mix(nn.Module):
     def __init__(self, args, hidden_dims=[]):
@@ -485,7 +498,7 @@ class BasicMotionEncoder_mix_conf(nn.Module):
 class BasicMultiUpdateBlock_mix2(nn.Module):
     def __init__(self, args, hidden_dims=[]):
         super().__init__()
-        self.args = args
+
         self.encoder = BasicMotionEncoder_mix2(args)
         encoder_output_dim = 128
 
@@ -493,30 +506,39 @@ class BasicMultiUpdateBlock_mix2(nn.Module):
         self.gru08 = ConvGRU(hidden_dims[1], hidden_dims[0] * (args.n_gru_layers == 3) + hidden_dims[2])
         self.gru16 = ConvGRU(hidden_dims[0], hidden_dims[1])
         self.disp_head = DispHead(hidden_dims[2], hidden_dim=256, output_dim=1)
-        factor = 2**self.args.n_downsample
 
         self.mask_feat_4 = nn.Sequential(
             nn.Conv2d(hidden_dims[2], 32, 3, padding=1),
             nn.ReLU(inplace=True))
 
-    def forward(self, net, inp, flaw_stereo=None, disp=None, corr=None, flaw_mono=None, disp_mono=None, corr_mono=None, iter04=True, iter08=True, iter16=True, update=True):
-
+    def forward(
+        self,
+        net: List[torch.Tensor],
+        inp: List[List[torch.Tensor]],
+        flaw_stereo: torch.Tensor,
+        disp: Optional[torch.Tensor] = None,
+        corr: Optional[torch.Tensor] = None,
+        flaw_mono: Optional[torch.Tensor] = None,
+        disp_mono: Optional[torch.Tensor] = None,
+        corr_mono: Optional[torch.Tensor] = None,
+        iter04: bool = True,
+        iter08: bool = True,
+        iter16: bool = True,
+        update: bool = True,
+    ) -> Tuple[List[torch.Tensor], torch.Tensor, torch.Tensor]:
         if iter16:
-            net[2] = self.gru16(net[2], *(inp[2]), pool2x(net[1]))
+            net[2] = self.gru16(net[2], inp[2][0], inp[2][1], inp[2][2], pool2x(net[1]))
         if iter08:
-            if self.args.n_gru_layers > 2:
-                net[1] = self.gru08(net[1], *(inp[1]), pool2x(net[0]), interp(net[2], net[1]))
-            else:
-                net[1] = self.gru08(net[1], *(inp[1]), pool2x(net[0]))
+            net[1] = self.gru08(net[1], inp[1][0], inp[1][1], inp[1][2], pool2x(net[0]), interp(net[2], net[1]))
         if iter04:
+            assert flaw_mono is not None
+            assert disp_mono is not None
+            assert corr_mono is not None
+            assert disp is not None
+            assert corr is not None
             motion_features = self.encoder(disp, corr, flaw_stereo, disp_mono, corr_mono, flaw_mono)
-            if self.args.n_gru_layers > 1:
-                net[0] = self.gru04(net[0], *(inp[0]), motion_features, interp(net[1], net[0]))
-            else:
-                net[0] = self.gru04(net[0], *(inp[0]), motion_features)
+            net[0] = self.gru04(net[0], inp[0][0], inp[0][1], inp[0][2], motion_features, interp(net[1], net[0]))
 
-        if not update:
-            return net
         delta_disp = self.disp_head(net[0])
         mask_feat_4 = self.mask_feat_4(net[0])
         return net, mask_feat_4, delta_disp

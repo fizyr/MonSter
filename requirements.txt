@@ -1,0 +1,22 @@
+--index-url https://pypi.org/simple
+--extra-index-url https://download.openmmlab.com/mmcv/dist/cu118/torch2.1
+--extra-index-url https://download.pytorch.org/whl/cu118
+
+tqdm
+scipy
+opencv-python
+scikit-image
+tensorboard
+matplotlib
+timm==0.6.13
+accelerate==1.0.1
+gradio_imageslider
+gradio==4.29.0
+mmcv==2.1.0 
+torch==2.0.1
+torchvision==0.15.2
+torchaudio==2.0.2
+
+opt_einsum
+
+# Exec: uv pip install -r requirements.txt --prerelease=allow --index-strategy unsafe-best-match

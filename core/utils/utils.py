@@ -1,3 +1,5 @@
+from typing import List
+
 import torch
 import torch.nn.functional as F
 import numpy as np
@@ -6,16 +8,13 @@ from scipy import interpolate
 
 class InputPadder:
     """ Pads images such that dimensions are divisible by 8 """
-    def __init__(self, dims, mode='sintel', divis_by=8):
+    def __init__(self, dims: List[int], mode: str = 'sintel', divis_by: int = 8):
         self.ht, self.wd = dims[-2:]
         pad_ht = (((self.ht // divis_by) + 1) * divis_by - self.ht) % divis_by
         pad_wd = (((self.wd // divis_by) + 1) * divis_by - self.wd) % divis_by
-        if mode == 'sintel':
-            self._pad = [pad_wd//2, pad_wd - pad_wd//2, pad_ht//2, pad_ht - pad_ht//2]
-        else:
-            self._pad = [pad_wd//2, pad_wd - pad_wd//2, 0, pad_ht]
+        self._pad = [pad_wd//2, pad_wd - pad_wd//2, pad_ht//2, pad_ht - pad_ht//2]
 
-    def pad(self, *inputs):
+    def pad(self, inputs: List[torch.Tensor]):
         assert all((x.ndim == 4) for x in inputs)
         return [F.pad(x, self._pad, mode='replicate') for x in inputs]
 
@@ -56,7 +55,7 @@ def forward_interpolate(flow):
     return torch.from_numpy(flow).float()
 
 
-def bilinear_sampler(img, coords, mode='bilinear', mask=False):
+def bilinear_sampler(img, coords, mode: str = 'bilinear', mask: bool = False):
     """ Wrapper for grid_sample, uses pixel coordinates """
     H, W = img.shape[-2:]
     xgrid, ygrid = coords.split([1,1], dim=-1)
@@ -64,9 +63,9 @@ def bilinear_sampler(img, coords, mode='bilinear', mask=False):
     assert torch.unique(ygrid).numel() == 1 and H == 1 # This is a stereo problem
     grid = torch.cat([xgrid, ygrid], dim=-1)
     img = F.grid_sample(img, grid, align_corners=True)
-    if mask:
-        mask = (xgrid > -1) & (ygrid > -1) & (xgrid < 1) & (ygrid < 1)
-        return img, mask.float()
+    # if mask:
+    #     mask = (xgrid > -1) & (ygrid > -1) & (xgrid < 1) & (ygrid < 1)
+    #     return img, mask.float()
     return img
 
 
@@ -76,7 +75,7 @@ def coords_grid(batch, ht, wd):
     return coords[None].repeat(batch, 1, 1, 1)
 
 
-def upflow8(flow, mode='bilinear'):
+def upflow8(flow, mode: str = 'bilinear'):
     new_size = (8 * flow.shape[2], 8 * flow.shape[3])
     return  8 * F.interpolate(flow, size=new_size, mode=mode, align_corners=True)
 

@@ -1,9 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
-
-
 
 
 class BasicConv(nn.Module):
@@ -13,6 +10,9 @@ class BasicConv(nn.Module):
 
         self.relu = relu
         self.use_bn = bn
+
+        self.leaky_ReLU = nn.LeakyReLU() if self.relu else nn.Identity()
+
         if is_3d:
             if deconv:
                 self.conv = nn.ConvTranspose3d(in_channels, out_channels, bias=False, **kwargs)
@@ -30,8 +30,12 @@ class BasicConv(nn.Module):
         x = self.conv(x)
         if self.use_bn:
             x = self.bn(x)
-        if self.relu:
-            x = nn.LeakyReLU()(x)#, inplace=True)
+
+        # `nn.LeakyReLU()(x)` is not TorchScript compatible.
+        # if self.relu:
+        #     x = nn.LeakyReLU()(x)#, inplace=True)
+
+        x = self.leaky_ReLU(x)
         return x
 
 
@@ -84,6 +88,9 @@ class BasicConv_IN(nn.Module):
 
         self.relu = relu
         self.use_in = IN
+
+        self.leaky_ReLU = nn.LeakyReLU() if self.relu else nn.Identity()
+
         if is_3d:
             if deconv:
                 self.conv = nn.ConvTranspose3d(in_channels, out_channels, bias=False, **kwargs)
@@ -101,8 +108,12 @@ class BasicConv_IN(nn.Module):
         x = self.conv(x)
         if self.use_in:
             x = self.IN(x)
-        if self.relu:
-            x = nn.LeakyReLU()(x)#, inplace=True)
+
+        # `nn.LeakyReLU()(x)` is not TorchScript compatible.
+        # if self.relu:
+        #     x = nn.LeakyReLU()(x)#, inplace=True)
+
+        x = self.leaky_ReLU(x)
         return x
 
 
@@ -148,7 +159,7 @@ class Conv2x_IN(nn.Module):
         return x
 
 
-def groupwise_correlation(fea1, fea2, num_groups):
+def groupwise_correlation(fea1: torch.Tensor, fea2: torch.Tensor, num_groups: int):
     B, C, H, W = fea1.shape
     assert C % num_groups == 0
     channels_per_group = C // num_groups
@@ -156,7 +167,7 @@ def groupwise_correlation(fea1, fea2, num_groups):
     assert cost.shape == (B, num_groups, H, W)
     return cost
 
-def build_gwc_volume(refimg_fea, targetimg_fea, maxdisp, num_groups):
+def build_gwc_volume(refimg_fea: torch.Tensor, targetimg_fea, maxdisp: int, num_groups: int):
     B, C, H, W = refimg_fea.shape
     volume = refimg_fea.new_zeros([B, num_groups, maxdisp, H, W])
     for i in range(maxdisp):
@@ -216,7 +227,7 @@ def build_concat_volume(refimg_fea, targetimg_fea, maxdisp):
     volume = volume.contiguous()
     return volume
 
-def disparity_regression(x, maxdisp):
+def disparity_regression(x: torch.Tensor, maxdisp: int):
     assert len(x.shape) == 4
     disp_values = torch.arange(0, maxdisp, dtype=x.dtype, device=x.device)
     disp_values = disp_values.view(1, maxdisp, 1, 1)

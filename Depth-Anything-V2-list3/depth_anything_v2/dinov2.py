@@ -10,7 +10,7 @@
 from functools import partial
 import math
 import logging
-from typing import Sequence, Tuple, Union, Callable
+from typing import List, Tuple, Union, Callable, Optional
 
 import torch
 import torch.nn as nn
@@ -176,7 +176,7 @@ class DinoVisionTransformer(nn.Module):
             nn.init.normal_(self.register_tokens, std=1e-6)
         named_apply(init_weights_vit_timm, self)
 
-    def interpolate_pos_encoding(self, x, w, h):
+    def interpolate_pos_encoding(self, x: torch.Tensor, w: int, h: int):
         previous_dtype = x.dtype
         npatch = x.shape[1] - 1
         N = self.pos_embed.shape[1] - 1
@@ -209,7 +209,7 @@ class DinoVisionTransformer(nn.Module):
         patch_pos_embed = patch_pos_embed.permute(0, 2, 3, 1).view(1, -1, dim)
         return torch.cat((class_pos_embed.unsqueeze(0), patch_pos_embed), dim=1).to(previous_dtype)
 
-    def prepare_tokens_with_masks(self, x, masks=None):
+    def prepare_tokens_with_masks(self, x: torch.Tensor, masks: Optional[torch.Tensor] = None):
         B, nc, w, h = x.shape
         x = self.patch_embed(x)
         if masks is not None:
@@ -250,7 +250,7 @@ class DinoVisionTransformer(nn.Module):
             )
         return output
 
-    def forward_features(self, x, masks=None):
+    def forward_features(self, x, masks: Optional[torch.Tensor] = None):
         if isinstance(x, list):
             return self.forward_features_list(x, masks)
 
@@ -268,44 +268,50 @@ class DinoVisionTransformer(nn.Module):
             "masks": masks,
         }
 
-    def _get_intermediate_layers_not_chunked(self, x, n=1):
+    def _get_intermediate_layers_not_chunked(
+        self, x: torch.Tensor, n: List[int]
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         x = self.prepare_tokens_with_masks(x)
-        # If n is an int, take the n last blocks. If it's a list, take them
-        output, total_block_len = [], len(self.blocks)
-        blocks_to_take = range(total_block_len - n, total_block_len) if isinstance(n, int) else n
-        for i, blk in enumerate(self.blocks):
-            x = blk(x)
-            if i in blocks_to_take:
-                output.append(x)
-        assert len(output) == len(blocks_to_take), f"only {len(output)} / {len(blocks_to_take)} blocks found"
-        return output
 
-    def _get_intermediate_layers_chunked(self, x, n=1):
-        x = self.prepare_tokens_with_masks(x)
-        output, i, total_block_len = [], 0, len(self.blocks[-1])
-        # If n is an int, take the n last blocks. If it's a list, take them
-        blocks_to_take = range(total_block_len - n, total_block_len) if isinstance(n, int) else n
-        for block_chunk in self.blocks:
-            for blk in block_chunk[i:]:  # Passing the nn.Identity()
-                x = blk(x)
-                if i in blocks_to_take:
-                    output.append(x)
-                i += 1
-        assert len(output) == len(blocks_to_take), f"only {len(output)} / {len(blocks_to_take)} blocks found"
-        return output
+        out0: torch.Tensor = torch.empty(0)
+        out1: torch.Tensor = torch.empty(0)
+        out2: torch.Tensor = torch.empty(0)
+        out3: torch.Tensor = torch.empty(0)
+
+        i = 0
+        for blk in self.blocks:
+            x = blk(x)
+            if i == n[0]:
+                out0 = x
+            elif i == n[1]:
+                out1 = x
+            elif i == n[2]:
+                out2 = x
+            elif i == n[3]:
+                out3 = x
+            i += 1
+
+        return out0, out1, out2, out3
 
     def get_intermediate_layers(
         self,
         x: torch.Tensor,
-        n: Union[int, Sequence] = 1,  # Layers or n last layers to take
+        n: Optional[List[int]] = None,  # Layers or n last layers to take
         reshape: bool = False,
         return_class_token: bool = False,
-        norm=True
-    ) -> Tuple[Union[torch.Tensor, Tuple[torch.Tensor]]]:
-        if self.chunked_blocks:
-            outputs = self._get_intermediate_layers_chunked(x, n)
-        else:
-            outputs = self._get_intermediate_layers_not_chunked(x, n)
+        norm: bool = True,
+    ) -> Tuple[
+        Tuple[torch.Tensor, torch.Tensor],
+        Tuple[torch.Tensor, torch.Tensor],
+        Tuple[torch.Tensor, torch.Tensor],
+        Tuple[torch.Tensor, torch.Tensor],
+    ]:
+        if n is None:
+            n = [4, 11, 17, 23]
+
+        out0, out1, out2, out3 = self._get_intermediate_layers_not_chunked(x, n)
+        outputs = [out0, out1, out2, out3]
+
         if norm:
             outputs = [self.norm(out) for out in outputs]
         class_tokens = [out[:, 0] for out in outputs]
@@ -316,16 +322,21 @@ class DinoVisionTransformer(nn.Module):
                 out.reshape(B, w // self.patch_size, h // self.patch_size, -1).permute(0, 3, 1, 2).contiguous()
                 for out in outputs
             ]
-        if return_class_token:
-            return tuple(zip(outputs, class_tokens))
-        return tuple(outputs)
 
-    def forward(self, *args, is_training=False, **kwargs):
-        ret = self.forward_features(*args, **kwargs)
-        if is_training:
-            return ret
-        else:
-            return self.head(ret["x_norm_clstoken"])
+        return (
+            (outputs[0], class_tokens[0]),
+            (outputs[1], class_tokens[1]),
+            (outputs[2], class_tokens[2]),
+            (outputs[3], class_tokens[3]),
+        )
+
+    def forward(self, x: torch.Tensor, is_training: bool = False, masks: Optional[torch.Tensor] = None) -> Optional[torch.Tensor]:
+        ret = self.forward_features(x, masks=masks)
+        x_clstoken = ret["x_norm_clstoken"]
+
+        if x_clstoken is None:
+            return None
+        return self.head(x_clstoken)
 
 
 def init_weights_vit_timm(module: nn.Module, name: str = ""):

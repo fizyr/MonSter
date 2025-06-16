@@ -395,6 +395,8 @@ class REMP(nn.Module):
 
         self.final_conv = nn.Conv2d(32, 1, 3, 1, 1)
 
+        self.leaky_ReLU = nn.LeakyReLU()
+
     def forward(self, disp_mono, disp_stereo, left_img, right_img):
 
         assert disp_mono.dim() == 4
@@ -427,7 +429,7 @@ class REMP(nn.Module):
 
         x = self.final_conv(x)  # [B, 1, H, W]
 
-        disp_stereo = nn.LeakyReLU()(disp_stereo + x)  # [B, 1, H, W]
+        disp_stereo = self.leaky_ReLU(disp_stereo + x)  # [B, 1, H, W]
 
         return disp_stereo
 
