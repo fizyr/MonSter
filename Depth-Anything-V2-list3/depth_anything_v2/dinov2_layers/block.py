@@ -19,9 +19,6 @@ from .layer_scale import LayerScale
 from .mlp import Mlp
 
 
-logger = logging.getLogger("dinov2")
-
-
 class NestedTensorBlock(nn.Module):
     def __init__(
         self,

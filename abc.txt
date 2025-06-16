@@ -1,0 +1,12 @@
+numpy
+Pillow
+
+# Note: python-pytorch 2.7.0-6 is available in Arch.
+# Link: https://archlinux.org/packages/extra/x86_64/python-pytorch/
+torch==2.7.0
+
+# Setting up a venv with uv
+#
+# > uv venv --python 3.13
+# > source .venv/bin/activate
+# > uv pip install -r requirements.txt

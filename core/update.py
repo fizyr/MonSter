@@ -3,7 +3,6 @@ from typing import Optional, Tuple, List
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from opt_einsum import contract
 
 class FlowHead(nn.Module):
     def __init__(self, input_dim=128, hidden_dim=256, output_dim=2):

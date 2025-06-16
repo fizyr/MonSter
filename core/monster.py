@@ -8,18 +8,7 @@ from core.geometry import Combined_Geo_Encoding_Volume
 from core.submodule import *
 from core.refinement import REMP
 from core.warp import disp_warp
-import matplotlib.pyplot as plt
 
-try:
-    autocast = torch.cuda.amp.autocast
-except:
-    class autocast:
-        def __init__(self, enabled):
-            pass
-        def __enter__(self):
-            pass
-        def __exit__(self, *args):
-            pass
 import sys
 sys.path.append('./Depth-Anything-V2-list3')
 from depth_anything_v2.dpt import DepthAnythingV2, DepthAnythingV2_decoder
@@ -352,7 +341,6 @@ class Monster(nn.Module):
 
     def upsample_disp(self, disp, mask_feat_4, stem_2x):
 
-        # with autocast(enabled=self.args.mixed_precision):
         xspx = self.spx_2_gru(mask_feat_4, stem_2x)
         spx_pred = self.spx_gru(xspx)
         spx_pred = F.softmax(spx_pred, 1)
@@ -372,7 +360,7 @@ class Monster(nn.Module):
 
         image1 = (2 * (image1 / 255.0) - 1.0).contiguous()
         image2 = (2 * (image2 / 255.0) - 1.0).contiguous()
-        # with torch.autocast(device_type='cuda', dtype=torch.float32): 
+
         depth_mono, features_mono_left,  features_mono_right = self.infer_mono(image1, image2)
 
         scale_factor: float = 0.25

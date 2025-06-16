@@ -173,4 +173,9 @@ marimo/_lsp/
 __marimo__/
 
 # PyTorch
-.pth
+*.pt
+*.pth
+
+# dev
+input/**/*.png
+output/**/*.png
