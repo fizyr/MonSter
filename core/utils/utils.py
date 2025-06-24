@@ -12,7 +12,14 @@ class InputPadder:
         self.ht, self.wd = dims[-2:]
         pad_ht = (((self.ht // divis_by) + 1) * divis_by - self.ht) % divis_by
         pad_wd = (((self.wd // divis_by) + 1) * divis_by - self.wd) % divis_by
-        self._pad = [pad_wd//2, pad_wd - pad_wd//2, pad_ht//2, pad_ht - pad_ht//2]
+
+        # TorchScript requires first initializations to be outside of control flow blocks.
+        self._pad = [0, 0, 0, 0]
+
+        if mode == 'sintel':
+            self._pad = [pad_wd//2, pad_wd - pad_wd//2, pad_ht//2, pad_ht - pad_ht//2]
+        else:
+            self._pad = [pad_wd//2, pad_wd - pad_wd//2, 0, pad_ht]
 
     def pad(self, inputs: List[torch.Tensor]):
         assert all((x.ndim == 4) for x in inputs)
@@ -55,7 +62,8 @@ def forward_interpolate(flow):
     return torch.from_numpy(flow).float()
 
 
-def bilinear_sampler(img, coords, mode: str = 'bilinear', mask: bool = False):
+# def bilinear_sampler(img, coords, mode: str = 'bilinear', mask: bool = False):
+def bilinear_sampler(img, coords):
     """ Wrapper for grid_sample, uses pixel coordinates """
     H, W = img.shape[-2:]
     xgrid, ygrid = coords.split([1,1], dim=-1)
@@ -63,9 +71,15 @@ def bilinear_sampler(img, coords, mode: str = 'bilinear', mask: bool = False):
     assert torch.unique(ygrid).numel() == 1 and H == 1 # This is a stereo problem
     grid = torch.cat([xgrid, ygrid], dim=-1)
     img = F.grid_sample(img, grid, align_corners=True)
+
+    # The following conditional branch is removed because it is never used in this code base.
+    # TorchScript isn't happy because of return type mismatch. Inside the branch's scope, the authors use
+    # `return img, mask.float()`, and at the end of the function they use `return img`.
+
     # if mask:
     #     mask = (xgrid > -1) & (ygrid > -1) & (xgrid < 1) & (ygrid < 1)
     #     return img, mask.float()
+
     return img
 
 

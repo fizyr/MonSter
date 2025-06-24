@@ -366,7 +366,7 @@ class Monster(nn.Module):
         scale_factor: float = 0.25
         size = (int(depth_mono.shape[-2] * scale_factor), int(depth_mono.shape[-1] * scale_factor))
 
-        disp_mono_4x = F.interpolate(depth_mono.contiguous(), size=size, mode='bilinear', align_corners=True)
+        disp_mono_4x = F.interpolate(depth_mono, size=size, mode='bilinear', align_corners=False)
 
         features_left = self.feat_transfer(features_mono_left)
         features_right = self.feat_transfer(features_mono_right)
@@ -412,7 +412,7 @@ class Monster(nn.Module):
         for idx, conv in enumerate(self.context_zqr_convs):
             x = inp_list[idx]
             split_tensor = conv(x).split(split_size=conv.out_channels // 3, dim=1)
-            result.append([s for s in split_tensor])
+            result.append(list(split_tensor))
         inp_list = result
 
         net_list_mono = [x.clone() for x in net_list]
@@ -424,7 +424,9 @@ class Monster(nn.Module):
         disp = init_disp
         disp_preds = []
 
-        disp_up: torch.Tensor = torch.rand(7, 7)
+        # Assign a dummy tensor.
+        # Otherwise, `disp_up` is first defined inside the for-loop.
+        disp_up = torch.zeros(1)
 
         for itr in range(iters):
             disp = disp.detach()
@@ -447,18 +449,20 @@ class Monster(nn.Module):
                 geo_feat_mono = geo_fn(disp_mono_4x, coords)
 
             else:
-                flaw_mono = torch.rand(7, 7)
-                flaw_stereo = torch.rand(7, 7)
-                geo_feat_mono = torch.rand(7, 7)
+                # Assign dummy tensors.
+                # Otherwise, TorchScript export fails because `flaw_mono` and other tensors
+                # are defined in the if control flow block, but not in the else block.
+                flaw_mono = torch.zeros(1)
+                flaw_stereo = torch.zeros(1)
+                geo_feat_mono = torch.zeros(1)
 
             if itr <= int(iters-8):
                 net_list, mask_feat_4, delta_disp = self.update_block(net_list, inp_list, geo_feat, disp, iter16=self.args.n_gru_layers==3, iter08=self.args.n_gru_layers>=2)
-                disp_mono_4x_up = torch.rand(7, 7)
-            else:
-                assert flaw_mono is not None
-                assert flaw_stereo is not None
-                assert geo_feat_mono is not None
 
+                # Assign a dummy tensor.
+                # Because `disp_mono_4x_up` is defined and used in the else control flow block but not in this if block.
+                disp_mono_4x_up = torch.zeros(1)
+            else:
                 net_list, mask_feat_4, delta_disp = self.update_block_mix_stereo(net_list, inp_list, flaw_stereo, disp, geo_feat, flaw_mono, disp_mono_4x, geo_feat_mono, iter16=self.args.n_gru_layers==3, iter08=self.args.n_gru_layers>=2)
                 net_list_mono, mask_feat_4_mono, delta_disp_mono = self.update_block_mix_mono(net_list_mono, inp_list, flaw_mono, disp_mono_4x, geo_feat_mono, flaw_stereo, disp, geo_feat, iter16=self.args.n_gru_layers==3, iter08=self.args.n_gru_layers>=2)
                 disp_mono_4x = disp_mono_4x + delta_disp_mono

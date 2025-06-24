@@ -1,11 +1,14 @@
 import os
-
 import sys
+import argparse
+from pathlib import Path
 
+import torch
+
+# Add 'core', which contains the imports
+# for MonSter to the module search path.
 sys.path.append("core")
 
-import argparse
-import torch
 from monster import Monster
 from utils.utils import InputPadder
 
@@ -16,8 +19,14 @@ class ScriptableMonSter(torch.nn.Module):
         self.monster = monster
 
     def forward(
-        self, left_image: torch.Tensor, right_image: torch.Tensor
+        self,
+        left_image: torch.Tensor,
+        right_image: torch.Tensor
     ) -> torch.Tensor:
+
+        left_image = left_image.unsqueeze(0)
+        right_image = right_image.unsqueeze(0)
+
         # Now pad to make divisible by 32
         padder = InputPadder(left_image.shape, divis_by=32)
         left_image, right_image = padder.pad(inputs=[left_image, right_image])
@@ -28,7 +37,9 @@ class ScriptableMonSter(torch.nn.Module):
         # Remove padding
         disp = padder.unpad(disp)
 
-        return disp.squeeze()
+        disp = torch.squeeze(disp[:, 0, :, :])
+
+        return disp
 
 
 def parse_args():
@@ -36,7 +47,8 @@ def parse_args():
     parser.add_argument(
         "--restore_ckpt",
         help="restore checkpoint",
-        default=os.path.join(".", "pretrained", "mix_all.pth"),
+        type=Path,
+        default=Path(".") / "pretrained" / "mix_all.pth",
     )
     parser.add_argument(
         "--validate",
@@ -46,8 +58,10 @@ def parse_args():
     parser.add_argument(
         "--output_directory",
         help="directory to save output",
-        default=os.path.join(".", "output"),
+        type=Path,
+        default=Path(".") / "output",
     )
+
     return parser.parse_args()
 
 
@@ -64,18 +78,20 @@ def main() -> None:
 
     model.load_state_dict(checkpoint, strict=True)
 
-    # # Wrap the model in a scriptable MonSter model.
+    # Wrap the model in a scriptable MonSter model.
     monster = ScriptableMonSter(model)
     monster = monster.eval()
 
-    # Scripting a module fails on first error.
-    # It is possible that there are more errors in the module that failed scripting.
+    # Validate whether the model is compatible for TorchScript export.
     if cli_args.validate:
         named_modules_list = list(monster.named_modules())
         seen_module_class_names = set()
 
+        # A flag variable.
+        # We assume that the model is compatible for TorchScript export.
         valid: bool = True
 
+        # Validate each module in the model separately.
         for name, module in reversed(named_modules_list):
             class_name = type(module).__name__
             if class_name in seen_module_class_names:
@@ -92,12 +108,13 @@ def main() -> None:
         if valid:
             print("The model is TorchScript compatible")
 
+        # The script was executed for validation only.
         exit(0)
 
-    # Convert the MonSter PyTorch model to TorchScript and save to disk.
+    # Export the MonSter PyTorch model to TorchScript and save it to the disk.
     try:
         script = torch.jit.script(monster)
-        script.save(os.path.join(cli_args.output_directory, "monster_mix_all.pt"))
+        script.save(os.path.join(cli_args.output_directory, "monster-mix-script.pt"))
         print("Model exported to TorchScript")
     except Exception as e:
         print("❌ Failed to export the model to TorchScript")

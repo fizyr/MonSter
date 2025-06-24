@@ -428,6 +428,10 @@ class REMP(nn.Module):
 
         x = self.final_conv(x)  # [B, 1, H, W]
 
+        # Instantiate and call, which is a flexible way to code in python, is not TorchScript compatible.
+        # Instead, instantiate a `nn.LeakyReLU` in the constructor and use it here.
+
+        # disp_stereo = nn.LeakyReLU()(disp_stereo + x)  # [B, 1, H, W]
         disp_stereo = self.leaky_ReLU(disp_stereo + x)  # [B, 1, H, W]
 
         return disp_stereo
