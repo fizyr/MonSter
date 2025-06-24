@@ -31,13 +31,18 @@ class ConvGRU(nn.Module):
         self.convr = nn.Conv2d(hidden_dim+input_dim, hidden_dim, kernel_size, padding=kernel_size//2)
         self.convq = nn.Conv2d(hidden_dim+input_dim, hidden_dim, kernel_size, padding=kernel_size//2)
 
-    def forward(self, h, cz, cr, cq, x1: torch.Tensor, x2: Optional[torch.Tensor] = None):
+    # TorchScript does not support `*x_list` (variadic positional args) in function signatures.
+    # On evaluation, we observe that `x_list` is a list of `torch.Tensor`s with a max length of two.
+    # We denote `x0` as the first element, and `x1` as the second element.
 
-        # Build x based on the value of x2.
-        if x2 is not None:
-            x = torch.cat([x1, x2], dim=1)
+    # def forward(self, h, cz, cr, cq, *x_list):
+    def forward(self, h, cz, cr, cq, x0: torch.Tensor, x1: Optional[torch.Tensor] = None):
+
+        # Build x based on the value of x1.
+        if x1 is not None:
+            x = torch.cat([x0, x1], dim=1)
         else:
-            x = x1
+            x = x0
 
         hx = torch.cat([h, x], dim=1)
         z = torch.sigmoid(self.convz(hx) + cz)
@@ -151,14 +156,32 @@ class BasicMultiUpdateBlock(nn.Module):
     ) -> Tuple[List[torch.Tensor], torch.Tensor, torch.Tensor]:
 
         if iter16:
+            # net[2] = self.gru16(net[2], *(inp[2]), pool2x(net[1]))
             net[2] = self.gru16(net[2], inp[2][0], inp[2][1], inp[2][2], pool2x(net[1]))
         if iter08:
-            net[1] = self.gru08(net[1], inp[1][0], inp[1][1], inp[1][2], pool2x(net[0]), interp(net[2], net[1]))
+            if self.args.n_gru_layers > 2:
+                # net[1] = self.gru08(net[1], *(inp[1]), pool2x(net[0]), interp(net[2], net[1]))
+                net[1] = self.gru08(net[1], inp[1][0], inp[1][1], inp[1][2], pool2x(net[0]), interp(net[2], net[1]))
+            else:
+                # net[1] = self.gru08(net[1], *(inp[1]), pool2x(net[0]))
+                net[1] = self.gru08(net[1], inp[1][0], inp[1][1], inp[1][2], pool2x(net[0]))
         if iter04:
             assert disp is not None
             assert corr is not None
             motion_features = self.encoder(disp, corr)
-            net[0] = self.gru04(net[0], inp[0][0], inp[0][1], inp[0][2], motion_features, interp(net[1], net[0]))
+
+            if self.args.n_gru_layers > 1:
+                # net[0] = self.gru04(net[0], *(inp[0]), motion_features, interp(net[1], net[0]))
+                net[0] = self.gru04(net[0], inp[0][0], inp[0][1], inp[0][2], motion_features, interp(net[1], net[0]))
+            else:
+                # net[0] = self.gru04(net[0], *(inp[0]), motion_features)
+                net[0] = self.gru04(net[0], inp[0][0], inp[0][1], inp[0][2], motion_features)
+
+        # The following block of code is not executed during inference.
+        # We comment it because it results in a return type mismatch; have a look at the last line.
+
+        # if not update:
+        #     return net
 
         delta_disp = self.disp_head(net[0])
         mask_feat_4 = self.mask_feat_4(net[0])
@@ -498,6 +521,7 @@ class BasicMultiUpdateBlock_mix2(nn.Module):
     def __init__(self, args, hidden_dims=[]):
         super().__init__()
 
+        self.args = args
         self.encoder = BasicMotionEncoder_mix2(args)
         encoder_output_dim = 128
 
@@ -505,6 +529,7 @@ class BasicMultiUpdateBlock_mix2(nn.Module):
         self.gru08 = ConvGRU(hidden_dims[1], hidden_dims[0] * (args.n_gru_layers == 3) + hidden_dims[2])
         self.gru16 = ConvGRU(hidden_dims[0], hidden_dims[1])
         self.disp_head = DispHead(hidden_dims[2], hidden_dim=256, output_dim=1)
+        # factor = 2**self.args.n_downsample
 
         self.mask_feat_4 = nn.Sequential(
             nn.Conv2d(hidden_dims[2], 32, 3, padding=1),
@@ -526,9 +551,15 @@ class BasicMultiUpdateBlock_mix2(nn.Module):
         update: bool = True,
     ) -> Tuple[List[torch.Tensor], torch.Tensor, torch.Tensor]:
         if iter16:
+            # net[2] = self.gru16(net[2], *(inp[2]), pool2x(net[1]))
             net[2] = self.gru16(net[2], inp[2][0], inp[2][1], inp[2][2], pool2x(net[1]))
         if iter08:
-            net[1] = self.gru08(net[1], inp[1][0], inp[1][1], inp[1][2], pool2x(net[0]), interp(net[2], net[1]))
+            if self.args.n_gru_layers > 2:
+                # net[1] = self.gru08(net[1], *(inp[1]), pool2x(net[0]), interp(net[2], net[1]))
+                net[1] = self.gru08(net[1], inp[1][0], inp[1][1], inp[1][2], pool2x(net[0]), interp(net[2], net[1]))
+            else:
+                # net[1] = self.gru08(net[1], *(inp[1]), pool2x(net[0]))
+                net[1] = self.gru08(net[1], inp[1][0], inp[1][1], inp[1][2], pool2x(net[0]))
         if iter04:
             assert flaw_mono is not None
             assert disp_mono is not None
@@ -536,7 +567,18 @@ class BasicMultiUpdateBlock_mix2(nn.Module):
             assert disp is not None
             assert corr is not None
             motion_features = self.encoder(disp, corr, flaw_stereo, disp_mono, corr_mono, flaw_mono)
-            net[0] = self.gru04(net[0], inp[0][0], inp[0][1], inp[0][2], motion_features, interp(net[1], net[0]))
+            if self.args.n_gru_layers > 1:
+                # net[0] = self.gru04(net[0], *(inp[0]), motion_features, interp(net[1], net[0]))
+                net[0] = self.gru04(net[0], inp[0][0], inp[0][1], inp[0][2], motion_features, interp(net[1], net[0]))
+            else:
+                # net[0] = self.gru04(net[0], *(inp[0]), motion_features)
+                net[0] = self.gru04(net[0], inp[0][0], inp[0][1], inp[0][2], motion_features)
+
+        # The following block of code is not executed during inference.
+        # We comment it because it results in a return type mismatch; have a look at the last line.
+
+        # if not update:
+        #     return net
 
         delta_disp = self.disp_head(net[0])
         mask_feat_4 = self.mask_feat_4(net[0])

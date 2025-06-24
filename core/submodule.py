@@ -31,11 +31,12 @@ class BasicConv(nn.Module):
         if self.use_bn:
             x = self.bn(x)
 
-        # `nn.LeakyReLU()(x)` is not TorchScript compatible.
-        # if self.relu:
-        #     x = nn.LeakyReLU()(x)#, inplace=True)
+        if self.relu:
+            # `nn.LeakyReLU()(x)` is not TorchScript compatible.
+            # x = nn.LeakyReLU()(x)#, inplace=True)
 
-        x = self.leaky_ReLU(x)
+            x = self.leaky_ReLU(x)
+
         return x
 
 
@@ -109,11 +110,12 @@ class BasicConv_IN(nn.Module):
         if self.use_in:
             x = self.IN(x)
 
-        # `nn.LeakyReLU()(x)` is not TorchScript compatible.
-        # if self.relu:
-        #     x = nn.LeakyReLU()(x)#, inplace=True)
+        if self.relu:
+            # `nn.LeakyReLU()(x)` is not TorchScript compatible.
+            # x = nn.LeakyReLU()(x)#, inplace=True)
 
-        x = self.leaky_ReLU(x)
+            x = self.leaky_ReLU(x)
+
         return x
 
 

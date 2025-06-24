@@ -58,7 +58,7 @@ class MemEffAttention(Attention):
         # Copied from the definition of `forward` in the super class.
         # This is the code that executes when `XFORMERS_AVAILABLE` is False.
         #
-        # Note: Calls to super class methods are not TorchScript compatible, and that's why we make this change.
+        # Calls to super class' methods are not TorchScript compatible, and that's why we make this change.
 
         B, N, C = x.shape
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
