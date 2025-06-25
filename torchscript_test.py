@@ -12,15 +12,22 @@ def load_image(imfile):
     img = Image.open(imfile)
     img = np.array(img).astype(np.uint8)
     img = torch.from_numpy(img).permute(2, 0, 1).float()
-    return img[None].to("cuda")
+    img = img.to("cuda")
+
+    assert img.ndim == 3, f"Expected 3D tensor, got shape {img.shape}"
+    return img
 
 
 def main():
-    if version.parse(torch.__version__) < version.parse("2.2.0"):
+    # Displays multiple warnings otherwise.
+    #
+    # Note: nvfuser is no longer supported in newer versions of TorchScript.
+    # Use of _jit_set_nvfuser_enabled is deprecated and a no-op.
+    if version.parse(torch.__version__) < version.parse("2.2.0"):    
         torch._C._jit_set_nvfuser_enabled(False)
 
     with torch.no_grad():
-        model_path = os.path.join('output', 'monster_mix_all.pt')
+        model_path = os.path.join('output', 'monster-mix-script.pt')
         model = torch.jit.load(model_path, map_location="cuda")
         model.eval()
 

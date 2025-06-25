@@ -41,8 +41,9 @@ def interp(x, sample_grid, padding_mode: str):
     original_dtype = x.dtype
     x_fp32 = x.float()
     sample_grid_fp32 = sample_grid.float()
-    # with torch.cuda.amp.autocast(enabled=False):
-    output_fp32 = F.grid_sample(x_fp32, sample_grid_fp32, mode='bilinear', padding_mode=padding_mode, align_corners=False)
+    # JIT scripting & Autocast: https://github.com/pytorch/pytorch/blob/main/torch/csrc/jit/JIT-AUTOCAST.md
+    with torch.cuda.amp.autocast(enabled=False):
+        output_fp32 = F.grid_sample(x_fp32, sample_grid_fp32, mode='bilinear', padding_mode=padding_mode, align_corners=False)
     if original_dtype != torch.float32:
         output = output_fp32.to(original_dtype)
     else:

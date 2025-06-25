@@ -10,6 +10,8 @@
 from functools import partial
 import math
 import logging
+
+# from typing import Sequence, Tuple, Union, Callable
 from typing import List, Tuple, Callable, Optional
 
 import torch
@@ -193,7 +195,7 @@ class DinoVisionTransformer(nn.Module):
         # DINOv2 with register modify the interpolate_offset from 0.1 to 0.0
         w0, h0 = w0 + self.interpolate_offset, h0 + self.interpolate_offset
         # w0, h0 = w0 + 0.1, h0 + 0.1
-        
+
         sqrt_N = math.sqrt(N)
         sx, sy = float(w0) / sqrt_N, float(h0) / sqrt_N
         patch_pos_embed = nn.functional.interpolate(
@@ -203,7 +205,7 @@ class DinoVisionTransformer(nn.Module):
             mode="bicubic",
             antialias=self.interpolate_antialias
         )
-        
+
         assert int(w0) == patch_pos_embed.shape[-2]
         assert int(h0) == patch_pos_embed.shape[-1]
         patch_pos_embed = patch_pos_embed.permute(0, 2, 3, 1).view(1, -1, dim)
@@ -269,7 +271,9 @@ class DinoVisionTransformer(nn.Module):
         }
 
     def _get_intermediate_layers_not_chunked(
-        self, x: torch.Tensor, n: List[int]
+        self,
+        x: torch.Tensor,
+        n: List[int],
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         x = self.prepare_tokens_with_masks(x)
 
@@ -292,6 +296,23 @@ class DinoVisionTransformer(nn.Module):
             i += 1
 
         return out0, out1, out2, out3
+    
+    # Does not seem to be in use during inference.
+    # Easier to just comment it out for now than making it TorchScript compatible.
+
+    # def _get_intermediate_layers_chunked(self, x, n=1):
+    #     x = self.prepare_tokens_with_masks(x)
+    #     output, i, total_block_len = [], 0, len(self.blocks[-1])
+    #     # If n is an int, take the n last blocks. If it's a list, take them
+    #     blocks_to_take = range(total_block_len - n, total_block_len) if isinstance(n, int) else n
+    #     for block_chunk in self.blocks:
+    #         for blk in block_chunk[i:]:  # Passing the nn.Identity()
+    #             x = blk(x)
+    #             if i in blocks_to_take:
+    #                 output.append(x)
+    #             i += 1
+    #     assert len(output) == len(blocks_to_take), f"only {len(output)} / {len(blocks_to_take)} blocks found"
+    #     return output
 
     def get_intermediate_layers(
         self,
@@ -309,6 +330,11 @@ class DinoVisionTransformer(nn.Module):
         if n is None:
             n = [4, 11, 17, 23]
 
+        # if self.chunked_blocks:
+        #     outputs = self._get_intermediate_layers_chunked(x, n)
+        # else:
+        #     outputs = self._get_intermediate_layers_not_chunked(x, n)
+
         out0, out1, out2, out3 = self._get_intermediate_layers_not_chunked(x, n)
         outputs = [out0, out1, out2, out3]
 
@@ -322,6 +348,10 @@ class DinoVisionTransformer(nn.Module):
                 out.reshape(B, w // self.patch_size, h // self.patch_size, -1).permute(0, 3, 1, 2).contiguous()
                 for out in outputs
             ]
+        
+        # if return_class_token:
+        #     return tuple(zip(outputs, class_tokens))
+        # return tuple(outputs)
 
         return (
             (outputs[0], class_tokens[0]),
@@ -329,8 +359,20 @@ class DinoVisionTransformer(nn.Module):
             (outputs[2], class_tokens[2]),
             (outputs[3], class_tokens[3]),
         )
+    
+    # def forward(self, *args, is_training=False, **kwargs):
+    #     ret = self.forward_features(*args, **kwargs)
+    #     if is_training:
+    #         return ret
+    #     else:
+    #         return self.head(ret["x_norm_clstoken"])
 
-    def forward(self, x: torch.Tensor, is_training: bool = False, masks: Optional[torch.Tensor] = None) -> Optional[torch.Tensor]:
+    def forward(
+        self,
+        x: torch.Tensor,
+        is_training: bool = False,
+        masks: Optional[torch.Tensor] = None,
+    ) -> Optional[torch.Tensor]:
         ret = self.forward_features(x, masks=masks)
         x_clstoken = ret["x_norm_clstoken"]
 
@@ -413,7 +455,7 @@ def DINOv2(model_name):
         "vitl": vit_large, 
         "vitg": vit_giant2
     }
-    
+
     return model_zoo[model_name](
         img_size=518,
         patch_size=14,

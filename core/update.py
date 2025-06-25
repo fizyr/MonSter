@@ -84,6 +84,7 @@ class SepConvGRU(nn.Module):
 def interp(x, dest):
     original_dtype = x.dtype
     x_fp32 = x.float()
+    # JIT scripting & Autocast: https://github.com/pytorch/pytorch/blob/main/torch/csrc/jit/JIT-AUTOCAST.md
     with torch.cuda.amp.autocast(enabled=False):
         output_fp32 = F.interpolate(x_fp32.contiguous(), dest.shape[2:], mode='bilinear', align_corners=True)
     if original_dtype != torch.float32:
