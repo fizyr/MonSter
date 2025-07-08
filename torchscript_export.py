@@ -6,16 +6,22 @@ from typing import List
 
 import torch
 
-# Add 'core', which contains the imports
-# for MonSter to the module search path.
+# Add 'core', which contains the imports for MonSter, to the module search path.
 sys.path.append("core")
 
 from monster import Monster
 from utils.utils import InputPadder
 
 
-class ScriptableMonSter(torch.nn.Module):
+class WrappedMonSter(torch.nn.Module):
+    """ A wrapper around the original MonSter implementation to simplify the TorchScript interface. """
+
     def __init__(self, monster: torch.nn.Module):
+        """ The constructor of WrappedMonSter.
+
+        Args:
+            monster (torch.nn.Module): The scriptable MonSter module.
+        """
         super().__init__()
         self.monster = monster
 
@@ -24,18 +30,27 @@ class ScriptableMonSter(torch.nn.Module):
         left_image: torch.Tensor,
         right_image: torch.Tensor
     ) -> torch.Tensor:
+        """ Given the left and right stereo pair, predict and return the disparity.
+
+        Args:
+            left_image (torch.Tensor): The left image of the stereo pair.
+            right_image (torch.Tensor): The right image of the stereo pair.
+
+        Returns:
+            The predicted disparity as a PyTorch tensor.
+        """
 
         left_image = left_image.unsqueeze(0)
         right_image = right_image.unsqueeze(0)
 
-        # Now pad to make divisible by 32
+        # Now pad to make divisible by 32.
         padder = InputPadder(left_image.shape, divis_by=32)
         left_image, right_image = padder.pad(inputs=[left_image, right_image])
 
-        # Run the monster model
+        # Run the monster model.
         disp = self.monster(left_image, right_image, iters=24, test_mode=True)
 
-        # Remove padding
+        # Remove the padding.
         disp = padder.unpad(disp)
 
         disp = torch.squeeze(disp[:, 0, :, :])
@@ -59,10 +74,8 @@ def parse_args(arg_list: List[str] = sys.argv[1:]) -> Namespace:
 		allow_abbrev=False
     )
 
-    parser.add_argument("--restore_ckpt", help="restore checkpoint", type=Path, default=Path(".") / "pretrained" / "mix_all.pth")
-    parser.add_argument("--validate", action="store_true", help="detect offending (TorchScript incompatible) graph nodes")
-
-    parser.add_argument("--output_directory", help="directory to save output", type=Path, default=Path(".") / "output")
+    parser.add_argument("restore_ckpt", help="restore checkpoint", type=Path)
+    parser.add_argument("script_path",  help="Path for saving the torchscript model", type=Path)
 
     return parser.parse_args(arg_list)
 
@@ -74,56 +87,30 @@ def main() -> None:
     model = Monster()
 
     assert os.path.exists(args.restore_ckpt)
-    checkpoint = torch.load(
-        args.restore_ckpt, map_location="cpu", weights_only=True
-    )
+    checkpoint = torch.load(args.restore_ckpt, map_location="cpu", weights_only=True)
 
     model.load_state_dict(checkpoint, strict=True)
 
-    # Wrap the model in a scriptable MonSter model.
-    monster = ScriptableMonSter(model)
+    # Wrap the model to create a simplified interface.
+    monster = WrappedMonSter(model)
     monster = monster.eval()
-
-    # Note: The torchscript exporter exits at the first point of failure.
-    # The following block of code runs the exporter, individually, on all 1-level deep sub-modules in MonSter to torchscript.
-
-    # Validate whether the model is compatible for TorchScript export.
-    if args.validate:
-        named_modules_list = list(monster.named_modules())
-        seen_module_class_names = set()
-
-        # A flag variable.
-        # We assume that the model is compatible for TorchScript export.
-        valid: bool = True
-
-        # Validate each module in the model separately.
-        for name, module in reversed(named_modules_list):
-            class_name = type(module).__name__
-            if class_name in seen_module_class_names:
-                continue
-            seen_module_class_names.add(class_name)
-
-            try:
-                torch.jit.script(module)
-            except Exception as e:
-                valid = False
-                print(f"❌ Failed to script: {name} ({type(module)})")
-                print(e)
-
-        if valid:
-            print("The model is TorchScript compatible")
-
-        # The script was executed for validation only.
-        exit(0)
 
     # Export the MonSter PyTorch model to TorchScript and save it to the disk.
     try:
         script = torch.jit.script(monster)
-        script.save(os.path.join(args.output_directory, "monster-mix-script.pt"))
-        print("Model exported to TorchScript")
+
+        # Create missing directories to save the TorchScript model.
+        split_out_path = args.script_path.parts
+        if len(split_out_path) > 1:
+            os.makedirs(os.path.join(*split_out_path[:-1]), exist_ok=True)
+        # Save the model
+        script.save(args.script_path)
+
+        print("Successfully exported the model to TorchScript")
+        print(f"File saved to {args.script_path}")
+
     except Exception as e:
-        print("❌ Failed to export the model to TorchScript")
-        print("If submodules are TorchScript incompatible, run using --validate, fix errors, and repeat")
+        print("Error: Failed to export the model to TorchScript")
         print(e)
 
 
