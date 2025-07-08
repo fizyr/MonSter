@@ -1,6 +1,9 @@
 import os
+import sys
+from typing import List
 from pathlib import Path
 from packaging import version
+from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser, Namespace
 
 import torch
 import numpy as np
@@ -22,51 +25,74 @@ def load_image(im_path: Path) -> torch.Tensor:
     assert img.ndim == 3, f"Expected 3D tensor, got shape {img.shape}"
 
     img = torch.from_numpy(img).permute(2, 0, 1).float()
-    img = img.to("cuda")
+
+    if torch.cuda.is_available():
+        img = img.to("cuda")
 
     return img
 
 
-def main():
+def parse_args(arg_list: List[str] = sys.argv[1:]) -> Namespace:
+    """ Parse the command line arguments.
+
+	Args:
+		arg_list: The list of arguments to be parsed.
+
+	Returns:
+		The parsed command line arguments.
+	"""
+
+    parser = ArgumentParser(
+        description='Script for exporting MonSter to a torchscript module.',
+        formatter_class=ArgumentDefaultsHelpFormatter,
+		allow_abbrev=False
+    )
+
+    parser.add_argument("model", help="path to the torchscript model", type=Path)
+    parser.add_argument("left_image", help="path to the left image in the stereo pair", type=Path)
+    parser.add_argument("right_image", help="path to the right image in the stereo pair", type=Path)
+
+    parser.add_argument("output_dir", help="the output directory to save the disparity image", type=Path)
+
+    return parser.parse_args(arg_list)
+
+
+def main() -> None:
+    args = parse_args()
+
+    assert os.path.exists(args.model), f"Given model file does not exist: {args.model}"
+    assert os.path.exists(args.left_image), (f"Left image path does not exist: {args.left_image}")
+    assert os.path.exists(args.right_image), (f"Right image path does not exist: {args.right_image}")
+
+    assert os.path.isdir(args.output_dir), (f"Given output directory does not exist: {args.output_dir}")
+
     # Turn off deprecated nvfuser if Torch version is old.
-    # Displays multiple warnings otherwise.
+    # Displays warning messages otherwise.
     if version.parse(torch.__version__) < version.parse("2.2.0"):
         torch._C._jit_set_nvfuser_enabled(False)
 
     with torch.no_grad():
-        model_path = Path("output") / "monster-mix-script.pt"
-        assert os.path.exists(model_path), f"Model file not found at {model_path}"
-
-        model = torch.jit.load(model_path, map_location="cpu")
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        model = torch.jit.load(args.model, map_location=device)
         model.eval()
 
         print("TorchScript model loaded")
 
-        image_left_path = Path("input") / "left" / "sample_l.png"
-        image_right_path = Path("input") / "right" / "sample_r.png"
-
-        assert os.path.exists(image_left_path), (
-            f"Left image not found at {image_left_path}"
-        )
-        assert os.path.exists(image_right_path), (
-            f"Right image not found at {image_right_path}"
-        )
-
-        image_left = load_image(image_left_path)
-        image_right = load_image(image_right_path)
+        image_left = load_image(args.left_image)
+        image_right = load_image(args.right_image)
 
         print("Stereo image pair loaded")
 
         # Predict the disparity for a given stereo image pair.
         disparity = model(image_left, image_right)
-
         disparity = disparity.cpu().numpy()
 
         # Scaling by 256 done to minimize precision loss when saving an image.
         # TODO: Normalize values in the range [0, 2^16)
         disparity_image = np.round(disparity * 256).astype(np.uint16)
+
         # Save the disparity image.
-        output_path = Path("output") / "disparity.png"
+        output_path = args.output_dir / "disparity.png"
         Image.fromarray(disparity_image).save(output_path)
 
         print(f"Image saved to {output_path}")
