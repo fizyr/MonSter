@@ -2,6 +2,8 @@
 --extra-index-url https://download.openmmlab.com/mmcv/dist/cu118/torch2.1
 --extra-index-url https://download.pytorch.org/whl/cu118
 
+pytest
+
 tqdm
 scipy
 opencv-python

@@ -1,7 +1,8 @@
 import os
 import sys
-import argparse
+from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser, Namespace
 from pathlib import Path
+from typing import List
 
 import torch
 
@@ -42,38 +43,39 @@ class ScriptableMonSter(torch.nn.Module):
         return disp
 
 
-def parse_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--restore_ckpt",
-        help="restore checkpoint",
-        type=Path,
-        default=Path(".") / "pretrained" / "mix_all.pth",
-    )
-    parser.add_argument(
-        "--validate",
-        action="store_true",
-        help="detect offending (TorchScript incompatible) graph nodes",
-    )
-    parser.add_argument(
-        "--output_directory",
-        help="directory to save output",
-        type=Path,
-        default=Path(".") / "output",
+def parse_args(arg_list: List[str] = sys.argv[1:]) -> Namespace:
+    """ Parse the command line arguments.
+
+	Args:
+		arg_list: The list of arguments to be parsed.
+
+	Returns:
+		The parsed command line arguments.
+	"""
+
+    parser = ArgumentParser(
+        description='Script for exporting MonSter to a torchscript module.',
+        formatter_class=ArgumentDefaultsHelpFormatter,
+		allow_abbrev=False
     )
 
-    return parser.parse_args()
+    parser.add_argument("--restore_ckpt", help="restore checkpoint", type=Path, default=Path(".") / "pretrained" / "mix_all.pth")
+    parser.add_argument("--validate", action="store_true", help="detect offending (TorchScript incompatible) graph nodes")
+
+    parser.add_argument("--output_directory", help="directory to save output", type=Path, default=Path(".") / "output")
+
+    return parser.parse_args(arg_list)
 
 
 def main() -> None:
-    cli_args = parse_args()
+    args = parse_args()
 
     # Load the model.
     model = Monster()
 
-    assert os.path.exists(cli_args.restore_ckpt)
+    assert os.path.exists(args.restore_ckpt)
     checkpoint = torch.load(
-        cli_args.restore_ckpt, map_location="cpu", weights_only=True
+        args.restore_ckpt, map_location="cpu", weights_only=True
     )
 
     model.load_state_dict(checkpoint, strict=True)
@@ -82,8 +84,11 @@ def main() -> None:
     monster = ScriptableMonSter(model)
     monster = monster.eval()
 
+    # Note: The torchscript exporter exits at the first point of failure.
+    # The following block of code runs the exporter, individually, on all 1-level deep sub-modules in MonSter to torchscript.
+
     # Validate whether the model is compatible for TorchScript export.
-    if cli_args.validate:
+    if args.validate:
         named_modules_list = list(monster.named_modules())
         seen_module_class_names = set()
 
@@ -114,7 +119,7 @@ def main() -> None:
     # Export the MonSter PyTorch model to TorchScript and save it to the disk.
     try:
         script = torch.jit.script(monster)
-        script.save(os.path.join(cli_args.output_directory, "monster-mix-script.pt"))
+        script.save(os.path.join(args.output_directory, "monster-mix-script.pt"))
         print("Model exported to TorchScript")
     except Exception as e:
         print("❌ Failed to export the model to TorchScript")

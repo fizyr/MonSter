@@ -14,7 +14,7 @@ class InputPadder:
         pad_wd = (((self.wd // divis_by) + 1) * divis_by - self.wd) % divis_by
 
         # TorchScript requires first initializations to be outside of control flow blocks.
-        self._pad = [0, 0, 0, 0]
+        self._pad: list[int] = [0, 0, 0, 0]
 
         if mode == 'sintel':
             self._pad = [pad_wd//2, pad_wd - pad_wd//2, pad_ht//2, pad_ht - pad_ht//2]

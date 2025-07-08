@@ -7,14 +7,23 @@ import numpy as np
 from PIL import Image
 
 
-def load_image(imfile):
-    """Utility function to load image files as tensors"""
-    img = Image.open(imfile)
+def load_image(im_path: Path) -> torch.Tensor:
+    """Utility to load an image file as a torch tensor.
+
+    Args:
+        im_path (pathlib.Path): The path to the image file on the system.
+
+    Returns:
+        A torch tensor of the image on the cuda device.
+    """
+
+    img = Image.open(im_path)
     img = np.array(img).astype(np.uint8)
+    assert img.ndim == 3, f"Expected 3D tensor, got shape {img.shape}"
+
     img = torch.from_numpy(img).permute(2, 0, 1).float()
     img = img.to("cuda")
 
-    assert img.ndim == 3, f"Expected 3D tensor, got shape {img.shape}"
     return img
 
 
@@ -28,7 +37,7 @@ def main():
         model_path = Path("output") / "monster-mix-script.pt"
         assert os.path.exists(model_path), f"Model file not found at {model_path}"
 
-        model = torch.jit.load(model_path, map_location="cuda")
+        model = torch.jit.load(model_path, map_location="cpu")
         model.eval()
 
         print("TorchScript model loaded")
@@ -48,11 +57,10 @@ def main():
 
         print("Stereo image pair loaded")
 
+        # Predict the disparity for a given stereo image pair.
         disparity = model(image_left, image_right)
-        torch.cuda.synchronize()
 
-        disparity = disparity.cpu()
-        disparity = disparity.numpy()
+        disparity = disparity.cpu().numpy()
 
         # Scaling by 256 done to minimize precision loss when saving an image.
         # TODO: Normalize values in the range [0, 2^16)
