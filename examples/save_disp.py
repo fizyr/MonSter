@@ -48,11 +48,10 @@ def parse_args(arg_list: List[str] = sys.argv[1:]) -> Namespace:
 		allow_abbrev=False
     )
 
-    parser.add_argument("model", help="path to the torchscript model", type=Path)
-    parser.add_argument("left_image", help="path to the left image in the stereo pair", type=Path)
-    parser.add_argument("right_image", help="path to the right image in the stereo pair", type=Path)
-
-    parser.add_argument("output_dir", help="the output directory to save the disparity image", type=Path)
+    parser.add_argument("model",            help="Path to the torchscript model", type=Path)
+    parser.add_argument("left_image",       help="Path to the left image in the stereo pair", type=Path)
+    parser.add_argument("right_image",      help="Path to the right image in the stereo pair", type=Path)
+    parser.add_argument("disparity_path",   help="Path to save the disparity image to", type=Path)
 
     return parser.parse_args(arg_list)
 
@@ -63,8 +62,6 @@ def main() -> None:
     assert os.path.exists(args.model), f"Given model file does not exist: {args.model}"
     assert os.path.exists(args.left_image), (f"Left image path does not exist: {args.left_image}")
     assert os.path.exists(args.right_image), (f"Right image path does not exist: {args.right_image}")
-
-    assert os.path.isdir(args.output_dir), (f"Given output directory does not exist: {args.output_dir}")
 
     # Turn off deprecated nvfuser if Torch version is old.
     # Displays warning messages otherwise.
@@ -91,11 +88,14 @@ def main() -> None:
         # TODO: Normalize values in the range [0, 2^16)
         disparity_image = np.round(disparity * 256).astype(np.uint16)
 
-        # Save the disparity image.
-        output_path = args.output_dir / "disparity.png"
-        Image.fromarray(disparity_image).save(output_path)
+        # Create missing directories to save the disparity image.
+        split_out_path = args.disparity_path.parts
+        if len(split_out_path) > 1:
+            os.makedirs(os.path.join(*split_out_path[:-1]), exist_ok=True)
 
-        print(f"Image saved to {output_path}")
+        # Save the disparity image.
+        Image.fromarray(disparity_image).save(args.disparity_path)
+        print(f"Image saved to {args.disparity_path}")
 
 
 if __name__ == "__main__":
