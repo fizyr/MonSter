@@ -10,14 +10,15 @@ import numpy as np
 from PIL import Image
 
 
-def load_image(im_path: Path) -> torch.Tensor:
+def load_image(im_path: Path, device: str = "cpu") -> torch.Tensor:
     """Utility to load an image file as a torch tensor.
 
     Args:
         im_path (pathlib.Path): The path to the image file on the system.
+        device (str)    : The device on which the tensor should be loaded.
 
     Returns:
-        A torch tensor of the image on the cuda device.
+        A torch tensor of the image on the specified device.
     """
 
     img = Image.open(im_path)
@@ -25,9 +26,7 @@ def load_image(im_path: Path) -> torch.Tensor:
     assert img.ndim == 3, f"Expected 3D tensor, got shape {img.shape}"
 
     img = torch.from_numpy(img).permute(2, 0, 1).float()
-
-    if torch.cuda.is_available():
-        img = img.to("cuda")
+    img = img.to(device)
 
     return img
 
@@ -70,15 +69,18 @@ def main() -> None:
 
     with torch.no_grad():
         device = "cuda" if torch.cuda.is_available() else "cpu"
+
         model = torch.jit.load(args.model, map_location=device)
         model.eval()
 
         print("TorchScript model loaded")
 
-        image_left = load_image(args.left_image)
-        image_right = load_image(args.right_image)
+        image_left = load_image(args.left_image, device)
+        image_right = load_image(args.right_image, device)
 
         print("Stereo image pair loaded")
+
+        # Note: Use two warm up runs in production.
 
         # Predict the disparity for a given stereo image pair.
         disparity = model(image_left, image_right)

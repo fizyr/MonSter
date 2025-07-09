@@ -8,7 +8,6 @@ import torch
 
 # Add 'core', which contains the imports for MonSter, to the module search path.
 sys.path.append("core")
-
 from monster import Monster
 from utils.utils import InputPadder
 
@@ -74,8 +73,21 @@ def parse_args(arg_list: List[str] = sys.argv[1:]) -> Namespace:
 		allow_abbrev=False
     )
 
-    parser.add_argument("restore_ckpt", help="restore checkpoint", type=Path)
-    parser.add_argument("script_path",  help="Path for saving the torchscript model", type=Path)
+    parser.add_argument(
+        "restore_ckpt",
+        help="Path to the trained model's restore checkpoint",
+        type=Path,
+        nargs="?",
+        default=Path("pretrained") / 'mix_all.pth'
+    )
+
+    parser.add_argument(
+        "script_path",
+        help="Path to save the torchscript model",
+        type=Path,
+        nargs="?",
+        default=Path("output") / 'monster-mix-script.pt'
+    )
 
     return parser.parse_args(arg_list)
 
@@ -83,12 +95,16 @@ def parse_args(arg_list: List[str] = sys.argv[1:]) -> Namespace:
 def main() -> None:
     args = parse_args()
 
-    # Load the model.
-    model = Monster()
+    # TODO: Attempt to download missing PyTorch models.
+    assert os.path.exists(args.restore_ckpt), f"Model checkpoint file does not exist: {args.restore_ckpt}"
+    # Note: MonSter relies on the depth anything v2 pytorch model. We assume it is located in the same dir.
+    depth_anything_path = args.restore_ckpt.with_name("depth_anything_v2_vitl.pth")
+    assert os.path.exists(depth_anything_path), f"Model checkpoint file does not exist: {depth_anything_path}"
 
-    assert os.path.exists(args.restore_ckpt)
     checkpoint = torch.load(args.restore_ckpt, map_location="cpu", weights_only=True)
 
+    # Load the model.
+    model = Monster()
     model.load_state_dict(checkpoint, strict=True)
 
     # Wrap the model to create a simplified interface.
