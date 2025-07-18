@@ -1,4 +1,3 @@
-import os
 import sys
 from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser, Namespace
 from pathlib import Path
@@ -15,11 +14,11 @@ from utils.utils import InputPadder
 class WrappedMonSter(torch.nn.Module):
     """ A wrapper around the original MonSter implementation to simplify the TorchScript interface. """
 
-    def __init__(self, monster: torch.nn.Module):
+    def __init__(self, monster: torch.nn.Module) -> None:
         """ The constructor of WrappedMonSter.
 
         Args:
-            monster (torch.nn.Module): The scriptable MonSter module.
+            monster :   The scriptable MonSter module.
         """
         super().__init__()
         self.monster = monster
@@ -32,8 +31,8 @@ class WrappedMonSter(torch.nn.Module):
         """ Given the left and right stereo pair, predict and return the disparity.
 
         Args:
-            left_image (torch.Tensor): The left image of the stereo pair.
-            right_image (torch.Tensor): The right image of the stereo pair.
+            left_image  :   The left image of the stereo pair.
+            right_image :   The right image of the stereo pair.
 
         Returns:
             The predicted disparity as a PyTorch tensor.
@@ -60,34 +59,21 @@ class WrappedMonSter(torch.nn.Module):
 def parse_args(arg_list: List[str] = sys.argv[1:]) -> Namespace:
     """ Parse the command line arguments.
 
-	Args:
-		arg_list: The list of arguments to be parsed.
+    Args:
+        arg_list: The list of arguments to be parsed.
 
-	Returns:
-		The parsed command line arguments.
+    Returns:
+        The parsed command line arguments.
 	"""
 
     parser = ArgumentParser(
         description='Script for exporting MonSter to a torchscript module.',
         formatter_class=ArgumentDefaultsHelpFormatter,
-		allow_abbrev=False
+		allow_abbrev=False,
     )
 
-    parser.add_argument(
-        "restore_ckpt",
-        help="Path to the trained model's restore checkpoint",
-        type=Path,
-        nargs="?",
-        default=Path("pretrained") / 'mix_all.pth'
-    )
-
-    parser.add_argument(
-        "script_path",
-        help="Path to save the torchscript model",
-        type=Path,
-        nargs="?",
-        default=Path("output") / 'monster-mix-script.pt'
-    )
+    parser.add_argument("--weights",        type=Path,  default=Path("pretrained") / 'mix_all.pth',         help="Path to the trained model's weights.")
+    parser.add_argument("--script_path",    type=Path,  default=Path("output") / 'monster-mix-script.pt',   help="Path to save the torchscript model to.")
 
     return parser.parse_args(arg_list)
 
@@ -96,16 +82,17 @@ def main() -> None:
     args = parse_args()
 
     # TODO: Attempt to download missing PyTorch models.
-    assert os.path.exists(args.restore_ckpt), f"Model checkpoint file does not exist: {args.restore_ckpt}"
-    # Note: MonSter relies on the depth anything v2 pytorch model. We assume it is located in the same dir.
-    depth_anything_path = args.restore_ckpt.with_name("depth_anything_v2_vitl.pth")
-    assert os.path.exists(depth_anything_path), f"Model checkpoint file does not exist: {depth_anything_path}"
 
-    checkpoint = torch.load(args.restore_ckpt, map_location="cpu", weights_only=True)
+    assert args.weights.is_file(), f"Model weights file does not exist: {args.weights}"
+    # Note: MonSter relies on the depth anything v2 pytorch model. We assume it is located in the same dir.
+    depth_anything_path = args.weights.with_name("depth_anything_v2_vitl.pth")
+    assert depth_anything_path.is_file(), f"Model weights file does not exist: {depth_anything_path}"
+
+    module = torch.load(args.weights, map_location="cpu", weights_only=True)
 
     # Load the model.
     model = Monster()
-    model.load_state_dict(checkpoint, strict=True)
+    model.load_state_dict(module, strict=True)
 
     # Wrap the model to create a simplified interface.
     monster = WrappedMonSter(model)
@@ -115,19 +102,15 @@ def main() -> None:
     try:
         script = torch.jit.script(monster)
 
-        # Create missing directories to save the TorchScript model.
-        split_out_path = args.script_path.parts
-        if len(split_out_path) > 1:
-            os.makedirs(os.path.join(*split_out_path[:-1]), exist_ok=True)
         # Save the model
+        args.script_path.parent.mkdir(parents=True, exist_ok=True)
         script.save(args.script_path)
 
         print("Successfully exported the model to TorchScript")
         print(f"File saved to {args.script_path}")
 
     except Exception as e:
-        print("Error: Failed to export the model to TorchScript")
-        print(e)
+        print(f"Error: Failed to export the model to TorchScript:\n{e}")
 
 
 if __name__ == "__main__":

@@ -7,16 +7,16 @@ import torch
 
 
 def create_test_image(
-        fill: numpy.uint8 = 127,
-        shape: tuple = (3, 960, 1280),
-        device: str = "cpu"
-    ) -> torch.Tensor:
-    """Create a test image for testing the torchscript MonSter model.
+    fill: numpy.uint8 = 127,
+    shape: tuple = (3, 960, 1280),
+    device: str = "cpu"
+) -> torch.Tensor:
+    """ Create a test image for testing the torchscript MonSter model.
 
     Args:
-        fill (numpy.uint8)  : A fill value for all the tensor elements.
-        shape (tuple)       : The dimensions of the image as [C, H, W].
-        device (str)        : The device on which the tensor should be loaded.
+        fill    :   A fill value for all the tensor elements.
+        shape   :   The dimensions of the image as [C, H, W].
+        device  :   The device on which the tensor should be loaded.
 
     Returns:
         A test image as a torch tensor.
