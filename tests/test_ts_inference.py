@@ -9,7 +9,7 @@ import torch
 def create_test_image(
     fill: numpy.uint8 = 127,
     shape: tuple = (3, 960, 1280),
-    device: str = "cpu"
+    device: torch.device = torch.device("cpu")
 ) -> torch.Tensor:
     """ Create a test image for testing the torchscript MonSter model.
 
@@ -34,7 +34,7 @@ def test_monster_mix_inference():
         torch._C._jit_set_nvfuser_enabled(False)
 
     with torch.no_grad():
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
 
         # Note: For this test, we assume the TorchScript model is in a fixed dir.
         model_path = Path('output') / 'monster-mix-script.pt'
