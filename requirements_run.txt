@@ -1,0 +1,13 @@
+pytest
+packaging
+
+numpy
+Pillow
+
+torch==2.6.0
+
+# Setting up a venv with uv
+#
+# > uv venv --python 3.13
+# > source .venv/bin/activate
+# > uv pip install -r requirements_run.txt

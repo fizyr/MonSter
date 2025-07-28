@@ -15,7 +15,7 @@ def normalize_coords(grid):
     return grid
 
 
-def meshgrid(img, homogeneous=False):
+def meshgrid(img, homogeneous: bool = False):
     """Generate meshgrid in image scale
     Args:
         img: [B, _, H, W]
@@ -37,12 +37,13 @@ def meshgrid(img, homogeneous=False):
         assert grid.size(1) == 3
     return grid
 
-def interp(x, sample_grid, padding_mode):
+def interp(x, sample_grid, padding_mode: str):
     original_dtype = x.dtype
     x_fp32 = x.float()
     sample_grid_fp32 = sample_grid.float()
+    # JIT scripting & Autocast: https://github.com/pytorch/pytorch/blob/main/torch/csrc/jit/JIT-AUTOCAST.md
     with torch.cuda.amp.autocast(enabled=False):
-        output_fp32 = F.grid_sample(x_fp32, sample_grid_fp32, mode='bilinear', padding_mode=padding_mode)
+        output_fp32 = F.grid_sample(x_fp32, sample_grid_fp32, mode='bilinear', padding_mode=padding_mode, align_corners=False)
     if original_dtype != torch.float32:
         output = output_fp32.to(original_dtype)
     else:
@@ -50,7 +51,7 @@ def interp(x, sample_grid, padding_mode):
     return output
 
 
-def disp_warp(img, disp, padding_mode='border'):
+def disp_warp(img, disp, padding_mode: str = 'border'):
     """Warping by disparity
     Args:
         img: [B, 3, H, W]

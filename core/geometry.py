@@ -4,7 +4,14 @@ from core.utils.utils import bilinear_sampler
 
 
 class Combined_Geo_Encoding_Volume:
-    def __init__(self, init_fmap1, init_fmap2, geo_volume, num_levels=2, radius=4):
+    def __init__(
+        self,
+        init_fmap1: torch.Tensor,
+        init_fmap2: torch.Tensor,
+        geo_volume: torch.Tensor,
+        num_levels: int = 2,
+        radius: int = 4,
+    ):
         self.num_levels = num_levels
         self.radius = radius
         self.geo_volume_pyramid = []
@@ -59,7 +66,7 @@ class Combined_Geo_Encoding_Volume:
 
     
     @staticmethod
-    def corr(fmap1, fmap2):
+    def corr(fmap1: torch.Tensor, fmap2: torch.Tensor):
         B, D, H, W1 = fmap1.shape
         _, _, _, W2 = fmap2.shape
         fmap1 = fmap1.view(B, D, H, W1)

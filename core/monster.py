@@ -1,3 +1,5 @@
+from typing import List, Optional
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -6,24 +8,13 @@ from core.geometry import Combined_Geo_Encoding_Volume
 from core.submodule import *
 from core.refinement import REMP
 from core.warp import disp_warp
-import matplotlib.pyplot as plt
 
-try:
-    autocast = torch.cuda.amp.autocast
-except:
-    class autocast:
-        def __init__(self, enabled):
-            pass
-        def __enter__(self):
-            pass
-        def __exit__(self, *args):
-            pass
 import sys
 sys.path.append('./Depth-Anything-V2-list3')
 from depth_anything_v2.dpt import DepthAnythingV2, DepthAnythingV2_decoder
 
     
-def compute_scale_shift(monocular_depth, gt_depth, mask=None):
+def compute_scale_shift(monocular_depth: torch.Tensor, gt_depth: torch.Tensor, mask: Optional[torch.Tensor] = None):
     """
     计算 monocular depth 和 ground truth depth 之间的 scale 和 shift.
     
@@ -62,7 +53,7 @@ def compute_scale_shift(monocular_depth, gt_depth, mask=None):
 
 
 class hourglass(nn.Module):
-    def __init__(self, in_channels):
+    def __init__(self, in_channels: int):
         super(hourglass, self).__init__()
 
         self.conv1 = nn.Sequential(BasicConv(in_channels, in_channels*2, is_3d=True, bn=True, relu=True, kernel_size=3,
@@ -106,7 +97,7 @@ class hourglass(nn.Module):
         self.feature_att_up_16 = FeatureAtt(in_channels*4, 192)
         self.feature_att_up_8 = FeatureAtt(in_channels*2, 64)
 
-    def forward(self, x, features):
+    def forward(self, x: torch.Tensor, features: List[torch.Tensor]):
         conv1 = self.conv1(x)
         conv1 = self.feature_att_8(conv1, features[1])
 
@@ -131,15 +122,16 @@ class hourglass(nn.Module):
         return conv
 
 class Feat_transfer_cnet(nn.Module):
-    def __init__(self, dim_list, output_dim):
+    def __init__(self, dim_list: List[int], output_dim: int):
         super(Feat_transfer_cnet, self).__init__()
 
         self.res_16x = nn.Conv2d(dim_list[0]+192, output_dim, kernel_size=3, padding=1, stride=1)
         self.res_8x = nn.Conv2d(dim_list[0]+96, output_dim, kernel_size=3, padding=1, stride=1)
         self.res_4x = nn.Conv2d(dim_list[0]+48, output_dim, kernel_size=3, padding=1, stride=1)
 
-    def forward(self, features, stem_x_list):
-        features_list = []
+    def forward(self, features: List[torch.Tensor], stem_x_list: List[torch.Tensor]):
+        features_list: List[List[torch.Tensor]] = torch.jit.annotate(List[List[torch.Tensor]], [])
+
         feat_16x = self.res_16x(torch.cat((features[2], stem_x_list[0]), 1))
         feat_8x = self.res_8x(torch.cat((features[1], stem_x_list[1]), 1))
         feat_4x = self.res_4x(torch.cat((features[0], stem_x_list[2]), 1))
@@ -198,7 +190,7 @@ class Feat_transfer(nn.Module):
 
 
 
-    def forward(self, features):
+    def forward(self, features: List[torch.Tensor]):
         features_mono_list = []
         feat_32x = self.conv32x(features[3])
         feat_32x_up = self.conv_up_32x(feat_32x)
@@ -214,15 +206,25 @@ class Feat_transfer(nn.Module):
         return features_mono_list
 
 
-
+class Args:
+    def __init__(self):
+        self.encoder: str = 'vitl'
+        self.hidden_dims: List[int] = [128, 128, 128]
+        self.corr_implementation: str = "reg"
+        self.corr_levels: int = 2
+        self.corr_radius: int = 4
+        self.n_downsample: int = 2
+        self.n_gru_layers: int = 3
+        self.max_disp: int = 192
 
 
 class Monster(nn.Module):
-    def __init__(self, args):
+    def __init__(self):
         super().__init__()
-        self.args = args
+
+        self.args = Args()
         
-        context_dims = args.hidden_dims
+        context_dims = self.args.hidden_dims
 
         self.intermediate_layer_idx = {
             'vits': [2, 5, 8, 11],
@@ -239,12 +241,12 @@ class Monster(nn.Module):
         dim_list_ = mono_model_configs[self.args.encoder]['features']
         dim_list = []
         dim_list.append(dim_list_)
-        self.update_block = BasicMultiUpdateBlock(self.args, hidden_dims=args.hidden_dims)
+        self.update_block = BasicMultiUpdateBlock(self.args, hidden_dims=self.args.hidden_dims)
 
-        self.context_zqr_convs = nn.ModuleList([nn.Conv2d(context_dims[i], args.hidden_dims[i]*3, 3, padding=3//2) for i in range(self.args.n_gru_layers)])
+        self.context_zqr_convs = nn.ModuleList([nn.Conv2d(context_dims[i], self.args.hidden_dims[i]*3, 3, padding=3//2) for i in range(self.args.n_gru_layers)])
 
         self.feat_transfer = Feat_transfer(dim_list)
-        self.feat_transfer_cnet = Feat_transfer_cnet(dim_list, output_dim=args.hidden_dims[0])
+        self.feat_transfer_cnet = Feat_transfer_cnet(dim_list, output_dim=self.args.hidden_dims[0])
 
 
         self.stem_2 = nn.Sequential(
@@ -289,9 +291,9 @@ class Monster(nn.Module):
         self.cost_agg = hourglass(8)
         self.classifier = nn.Conv3d(8, 1, 3, 1, 1, bias=False)
 
-        depth_anything = DepthAnythingV2(**mono_model_configs[args.encoder])
-        depth_anything_decoder = DepthAnythingV2_decoder(**mono_model_configs[args.encoder])
-        state_dict_dpt = torch.load(f'./pretrained/depth_anything_v2_{args.encoder}.pth', map_location='cpu')
+        depth_anything = DepthAnythingV2(**mono_model_configs[self.args.encoder])
+        depth_anything_decoder = DepthAnythingV2_decoder(**mono_model_configs[self.args.encoder])
+        state_dict_dpt = torch.load(f'./pretrained/depth_anything_v2_{self.args.encoder}.pth', map_location='cpu')
         # state_dict_dpt = torch.load(f'/home/cjd/cvpr2025/fusion/Depth-Anything-V2-list3/depth_anything_v2_{args.encoder}.pth', map_location='cpu')
         depth_anything.load_state_dict(state_dict_dpt, strict=True)
         depth_anything_decoder.load_state_dict(state_dict_dpt, strict=False)
@@ -305,8 +307,8 @@ class Monster(nn.Module):
         self.REMP = REMP()
 
 
-        self.update_block_mix_stereo = BasicMultiUpdateBlock_mix2(self.args, hidden_dims=args.hidden_dims)
-        self.update_block_mix_mono = BasicMultiUpdateBlock_mix2(self.args, hidden_dims=args.hidden_dims)
+        self.update_block_mix_stereo = BasicMultiUpdateBlock_mix2(self.args, hidden_dims=self.args.hidden_dims)
+        self.update_block_mix_mono = BasicMultiUpdateBlock_mix2(self.args, hidden_dims=self.args.hidden_dims)
 
 
         mean = [0.485, 0.456, 0.406]
@@ -314,7 +316,7 @@ class Monster(nn.Module):
         self.mean = torch.tensor(mean)
         self.std = torch.tensor(std)
 
-    def infer_mono(self, image1, image2):
+    def infer_mono(self, image1: torch.Tensor, image2: torch.Tensor):
         height_ori, width_ori = image1.shape[2:]
         resize_image1 = F.interpolate(image1, scale_factor=14 / 16, mode='bilinear', align_corners=True)
         resize_image2 = F.interpolate(image2, scale_factor=14 / 16, mode='bilinear', align_corners=True)
@@ -339,7 +341,6 @@ class Monster(nn.Module):
 
     def upsample_disp(self, disp, mask_feat_4, stem_2x):
 
-        # with autocast(enabled=self.args.mixed_precision):
         xspx = self.spx_2_gru(mask_feat_4, stem_2x)
         spx_pred = self.spx_gru(xspx)
         spx_pred = F.softmax(spx_pred, 1)
@@ -348,15 +349,21 @@ class Monster(nn.Module):
         return up_disp
 
 
-    def forward(self, image1, image2, iters=12, flow_init=None, test_mode=False):
+    def forward(
+        self,
+        image1: torch.Tensor,
+        image2: torch.Tensor,
+        iters: int = 16,
+        test_mode: bool = True,
+    ) -> torch.Tensor:
         """ Estimate disparity between pair of frames """
 
         image1 = (2 * (image1 / 255.0) - 1.0).contiguous()
         image2 = (2 * (image2 / 255.0) - 1.0).contiguous()
-        with torch.autocast(device_type='cuda', dtype=torch.float32): 
-            depth_mono, features_mono_left,  features_mono_right = self.infer_mono(image1, image2)
 
-        scale_factor = 0.25
+        depth_mono, features_mono_left,  features_mono_right = self.infer_mono(image1, image2)
+
+        scale_factor: float = 0.25
         size = (int(depth_mono.shape[-2] * scale_factor), int(depth_mono.shape[-1] * scale_factor))
 
         disp_mono_4x = F.interpolate(depth_mono, size=size, mode='bilinear', align_corners=False)
@@ -398,7 +405,16 @@ class Monster(nn.Module):
         net_list = [torch.tanh(x[0]) for x in cnet_list]
         inp_list = [torch.relu(x[1]) for x in cnet_list]
         inp_list = [torch.relu(x) for x in inp_list]
-        inp_list = [list(conv(i).split(split_size=conv.out_channels//3, dim=1)) for i,conv in zip(inp_list, self.context_zqr_convs)]
+        # inp_list = [list(conv(i).split(split_size=conv.out_channels//3, dim=1)) for i,conv in zip(inp_list, self.context_zqr_convs)]
+
+        # Length = 3
+        result: List[List[torch.Tensor]] = []
+        for idx, conv in enumerate(self.context_zqr_convs):
+            x = inp_list[idx]
+            split_tensor = conv(x).split(split_size=conv.out_channels // 3, dim=1)
+            result.append(list(split_tensor))
+        inp_list = result
+
         net_list_mono = [x.clone() for x in net_list]
 
         geo_block = Combined_Geo_Encoding_Volume
@@ -407,18 +423,23 @@ class Monster(nn.Module):
         coords = torch.arange(w).float().to(match_left.device).reshape(1,1,w,1).repeat(b, h, 1, 1).contiguous()
         disp = init_disp
         disp_preds = []
+
+        # Assign a dummy tensor.
+        # Otherwise, `disp_up` is first defined inside the for-loop.
+        disp_up = torch.zeros(1)
+
         for itr in range(iters):
             disp = disp.detach()
             if itr >= int(1):
                 disp_mono_4x = disp_mono_4x.detach()
             geo_feat = geo_fn(disp, coords)
+
             if itr > int(iters-8):
                 if itr == int(iters-7):
                     bs, _, _, _ = disp.shape
                     for i in range(bs):
-                        with torch.autocast(device_type='cuda', dtype=torch.float32): 
-                            scale, shift = compute_scale_shift(disp_mono_4x[i].clone().squeeze(1).to(torch.float32), disp[i].clone().squeeze(1).to(torch.float32))
-                        disp_mono_4x[i] = scale * disp_mono_4x[i] + shift
+                        scale, shift = compute_scale_shift(disp_mono_4x[i].clone().squeeze(1).to(torch.float32), disp[i].clone().squeeze(1).to(torch.float32))
+                        disp_mono_4x[i] = disp_mono_4x[i] * scale + shift
                 
                 warped_right_mono = disp_warp(features_right[0], disp_mono_4x.clone().to(features_right[0].dtype))[0]  
                 flaw_mono = warped_right_mono - features_left[0] 
@@ -427,8 +448,20 @@ class Monster(nn.Module):
                 flaw_stereo = warped_right_stereo - features_left[0] 
                 geo_feat_mono = geo_fn(disp_mono_4x, coords)
 
+            else:
+                # Assign dummy tensors.
+                # Otherwise, TorchScript export fails because `flaw_mono` and other tensors
+                # are defined in the if control flow block, but not in the else block.
+                flaw_mono = torch.zeros(1)
+                flaw_stereo = torch.zeros(1)
+                geo_feat_mono = torch.zeros(1)
+
             if itr <= int(iters-8):
                 net_list, mask_feat_4, delta_disp = self.update_block(net_list, inp_list, geo_feat, disp, iter16=self.args.n_gru_layers==3, iter08=self.args.n_gru_layers>=2)
+
+                # Assign a dummy tensor.
+                # Because `disp_mono_4x_up` is defined and used in the else control flow block but not in this if block.
+                disp_mono_4x_up = torch.zeros(1)
             else:
                 net_list, mask_feat_4, delta_disp = self.update_block_mix_stereo(net_list, inp_list, flaw_stereo, disp, geo_feat, flaw_mono, disp_mono_4x, geo_feat_mono, iter16=self.args.n_gru_layers==3, iter08=self.args.n_gru_layers>=2)
                 net_list_mono, mask_feat_4_mono, delta_disp_mono = self.update_block_mix_mono(net_list_mono, inp_list, flaw_mono, disp_mono_4x, geo_feat_mono, flaw_stereo, disp, geo_feat, iter16=self.args.n_gru_layers==3, iter08=self.args.n_gru_layers>=2)
@@ -443,12 +476,9 @@ class Monster(nn.Module):
             disp_up = self.upsample_disp(disp, mask_feat_4, stem_2x)
 
             if itr == iters - 1:
+                assert disp_mono_4x_up is not None
                 refine_value = self.REMP(disp_mono_4x_up, disp_up, image1, image2)
                 disp_up = disp_up + refine_value
             disp_preds.append(disp_up)
 
-        if test_mode:
-            return disp_up
-
-        init_disp = context_upsample(init_disp*4., spx_pred.float()).unsqueeze(1)
-        return init_disp, disp_preds, depth_mono
+        return disp_up

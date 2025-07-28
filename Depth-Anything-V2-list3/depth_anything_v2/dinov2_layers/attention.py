@@ -8,22 +8,9 @@
 #   https://github.com/facebookresearch/dino/blob/master/vision_transformer.py
 #   https://github.com/rwightman/pytorch-image-models/tree/master/timm/models/vision_transformer.py
 
-import logging
 
 from torch import Tensor
 from torch import nn
-
-
-logger = logging.getLogger("dinov2")
-
-
-try:
-    from xformers.ops import memory_efficient_attention, unbind, fmha
-
-    XFORMERS_AVAILABLE = True
-except ImportError:
-    logger.warning("xFormers not available")
-    XFORMERS_AVAILABLE = False
 
 
 class Attention(nn.Module):
@@ -63,19 +50,26 @@ class Attention(nn.Module):
 
 
 class MemEffAttention(Attention):
-    def forward(self, x: Tensor, attn_bias=None) -> Tensor:
-        if not XFORMERS_AVAILABLE:
-            assert attn_bias is None, "xFormers is required for nested tensors usage"
-            return super().forward(x)
+    def forward(self, x: Tensor) -> Tensor:
+        # if not XFORMERS_AVAILABLE:
+        #     assert attn_bias is None, "xFormers is required for nested tensors usage"
+        #     return super().forward(x)
+
+        # Copied from the definition of `forward` in the super class.
+        # This is the code that executes when `XFORMERS_AVAILABLE` is False.
+        #
+        # Calls to super class' methods are not TorchScript compatible, and that's why we make this change.
 
         B, N, C = x.shape
-        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads)
+        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
 
-        q, k, v = unbind(qkv, 2)
+        q, k, v = qkv[0] * self.scale, qkv[1], qkv[2]
+        attn = q @ k.transpose(-2, -1)
 
-        x = memory_efficient_attention(q, k, v, attn_bias=attn_bias)
-        x = x.reshape([B, N, C])
+        attn = attn.softmax(dim=-1)
+        attn = self.attn_drop(attn)
 
+        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
         x = self.proj(x)
         x = self.proj_drop(x)
         return x

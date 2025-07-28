@@ -1,3 +1,6 @@
+from typing import Optional, List
+
+import torch
 import torch.nn as nn
 
 
@@ -46,9 +49,9 @@ class ResidualConvUnit(nn.Module):
         
         self.conv2 = nn.Conv2d(features, features, kernel_size=3, stride=1, padding=1, bias=True, groups=self.groups)
 
-        if self.bn == True:
-            self.bn1 = nn.BatchNorm2d(features)
-            self.bn2 = nn.BatchNorm2d(features)
+        # The TorchScript exporter does not allow conditional initialization.
+        self.bn1 = nn.BatchNorm2d(features) if bn else nn.Identity()
+        self.bn2 = nn.BatchNorm2d(features) if bn else nn.Identity()
 
         self.activation = activation
 
@@ -74,8 +77,11 @@ class ResidualConvUnit(nn.Module):
         if self.bn == True:
             out = self.bn2(out)
 
-        if self.groups > 1:
-            out = self.conv_merge(out)
+        # `self.groups` is harc-coded to 1 in `__init__`, and it
+        # does not seem to be changed anywhere else in the code.
+
+        # if self.groups > 1:
+        #     out = self.conv_merge(out)
 
         return self.skip_add.add(out, x)
 
@@ -108,7 +114,7 @@ class FeatureFusionBlock(nn.Module):
 
         self.expand = expand
         out_features = features
-        if self.expand == True:
+        if self.expand:
             out_features = features // 2
         
         self.out_conv = nn.Conv2d(features, out_features, kernel_size=1, stride=1, padding=0, bias=True, groups=1)
@@ -119,30 +125,33 @@ class FeatureFusionBlock(nn.Module):
         self.skip_add = nn.quantized.FloatFunctional()
 
         self.size=size
+    
+    # TorchScript does not support `*xs` (variadic positional args) in function signatures.
+    # On evaluation, we observe that `xs` is a list of `torch.Tensor`s with a max length of two.
+    # We denote `xs0` as the first element, and `xs1` as the second element.
 
-    def forward(self, *xs, size=None):
+    # def forward(self, *xs, size=None):
+    def forward(self, xs0: torch.Tensor, xs1: Optional[torch.Tensor] = None, size: Optional[List[int]] = None):
         """Forward pass.
 
         Returns:
             tensor: output
         """
-        output = xs[0]
+        output = xs0
 
-        if len(xs) == 2:
-            res = self.resConfUnit1(xs[1])
+        if xs1 is not None:
+            res = self.resConfUnit1(xs1)
             output = self.skip_add.add(output, res)
 
         output = self.resConfUnit2(output)
 
         if (size is None) and (self.size is None):
-            modifier = {"scale_factor": 2}
+            output = nn.functional.interpolate(output, scale_factor=2.0, mode="bilinear", align_corners=self.align_corners)
         elif size is None:
-            modifier = {"size": self.size}
+            output = nn.functional.interpolate(output, size=self.size, mode="bilinear", align_corners=self.align_corners)
         else:
-            modifier = {"size": size}
+            output = nn.functional.interpolate(output, size=size, mode="bilinear", align_corners=self.align_corners)
 
-        output = nn.functional.interpolate(output, **modifier, mode="bilinear", align_corners=self.align_corners)
-        
         output = self.out_conv(output)
 
         return output
