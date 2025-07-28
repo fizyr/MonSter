@@ -15,7 +15,7 @@ accelerate==1.0.1
 gradio_imageslider
 gradio==4.29.0
 mmcv==2.1.0 
-torch==2.0.1
+torch==2.7.1+cu118
 torchvision==0.15.2
 torchaudio==2.0.2
 
