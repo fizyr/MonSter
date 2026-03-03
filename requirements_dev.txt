@@ -13,7 +13,7 @@ matplotlib
 timm==0.6.13
 accelerate==1.0.1
 gradio_imageslider
-gradio==4.29.0
+gradio==6.7.0
 mmcv==2.1.0 
 torch==2.0.1
 torchvision==0.15.2
